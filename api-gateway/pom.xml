@@ -39,9 +39,23 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-redis-reactive</artifactId>
 		</dependency>
+
+		<!--
+		  FIX (27/07/2026): Gateway dependency corrected from WebMVC to WebFlux.
+
+		  RateLimiterConfig used reactive types (Mono, KeyResolver) but this pom.xml
+		  originally declared spring-cloud-starter-gateway-server-webmvc, which does
+		  not include the reactive Gateway API. This caused build failures:
+			- package org.springframework.cloud.gateway.filter.ratelimit does not exist
+			- cannot find symbol class KeyResolver
+
+		  Changed dependency to spring-cloud-starter-gateway-server-webflux to match
+		  the reactive code already in RateLimiterConfig.java.
+		-->
+
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>
-			<artifactId>spring-cloud-starter-gateway-server-webmvc</artifactId>
+			<artifactId>spring-cloud-starter-gateway-server-webflux</artifactId>
 		</dependency>
 
 		<dependency>
