@@ -1,11 +1,23 @@
 spring:
   application:
     name: fraud-detection-service
-data:
-  redis:
-    host: localhost
-    port: 6379
-kafka:
+
+  # FIX (27/07/2026): "data" bị sai thụt lề trong file gốc — đang đứng ngang
+  # hàng với "spring" (thụt lề 0 khoảng trắng) thay vì nằm bên trong "spring".
+  # Sai: property được đọc thành "data.redis.host" (không tồn tại)
+  # Đúng: phải là "spring.data.redis.host" để Spring Boot nhận đúng cấu hình Redis.
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  # FIX (27/07/2026): "kafka" bị sai thụt lề TƯƠNG TỰ "data" ở trên — file gốc
+  # có "kafka:" đứng ngang hàng với "spring:", rồi lại có thêm 1 dòng "kafka:"
+  # lồng bên trong nó nữa (kafka.kafka.bootstrap-servers), khiến Spring không
+  # tìm thấy property "spring.kafka.bootstrap-servers" thật sự cần thiết.
+  # Đây chính là nguyên nhân bean KafkaTemplate<String, Object> không được tạo,
+  # gây lỗi: "No qualifying bean of type 'org.springframework.kafka.core.KafkaTemplate'"
+  # Đã xóa dòng "kafka:" bị lặp thừa, chỉ giữ lại đúng 1 cấp "kafka:" bên trong "spring:".
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
@@ -27,6 +39,7 @@ kafka:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
 server:
   port: 8084
 
@@ -45,4 +58,3 @@ management:
     web:
       exposure:
         include: health,info
-

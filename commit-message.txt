@@ -1,0 +1,235 @@
+fix: resolve all build errors across 6 microservices (compile + tests passing)
+
+=== account-service ===
+
+pom.xml:
+- Sai: spring-boot-starter-webmvc (không tồn tại) -> Sửa: spring-boot-starter-web
+- Sai: spring-boot-starter-kafka (không tồn tại) -> Sửa: spring-kafka (groupId org.springframework.kafka)
+- Xóa: spring-boot-starter-actuator-test, -data-jpa-test, -kafka-test, -validation-test,
+  -webmvc-test (không có artifact test riêng cho từng starter trong Spring Boot)
+  -> Thay bằng: spring-boot-starter-test + spring-kafka-test
+Điều tra: build log trong IDE liên tục sai lệch với thực tế do IntelliJ cache;
+xác nhận bằng mvnw clean compile chạy trực tiếp qua terminal, bỏ qua IDE.
+
+Account.java:
+- Thiếu hoàn toàn dòng "package com.banking.accountservice.entity;" ở đầu file
+- Phát hiện bằng: Get-Content Account.java | Select-Object -First 15
+
+AccountRepository.java:
+- Thiếu "import com.banking.accountservice.entity.Account;"
+- Sai chính tả method: "existByEmail" -> sửa thành "existsByEmail" (thiếu chữ "s",
+  không khớp với lời gọi trong AccountService.java)
+- Phát hiện bằng: mvnw clean compile, đọc lỗi "cannot find symbol" theo từng dòng
+
+AccountService.java:
+- Thiếu "import com.banking.accountservice.entity.Account;"
+
+IntelliJ project settings:
+- Vấn đề gốc khiến IDE luôn hiện lỗi cũ dù pom.xml đã đúng: IDE không delegate
+  build sang Maven. Fix: Settings > Build Tools > Maven > Runner > bật
+  "Delegate IDE build/run actions to Maven"
+
+=== api-gateway ===
+
+pom.xml:
+- Sai: spring-cloud-starter-gateway-server-webmvc (không khớp code Reactive
+  dùng Mono/KeyResolver) -> Sửa: spring-cloud-starter-gateway-server-webflux
+Điều tra: đọc RateLimiterConfig.java thấy import reactor.core.publisher.Mono
+và org.springframework.cloud.gateway.filter.ratelimit.KeyResolver, đối chiếu
+với artifactId trong pom.xml.
+
+=== fraud-detection-service ===
+
+pom.xml:
+- Cùng lỗi artifact sai như account-service (webmvc->web, kafka starter sai,
+  các *-test ảo)
+- Thêm mới: spring-cloud-starter-openfeign (thiếu hoàn toàn, cần cho @FeignClient)
+- Thêm mới: <dependencyManagement> với spring-cloud-dependencies BOM
+  (thiếu hoàn toàn, cần để Maven resolve version Spring Cloud)
+
+FraudDetectionServiceApplication.java:
+- Thiếu @EnableFeignClients -> Spring không tạo được bean cho AccountServiceClient
+  Lỗi: "No qualifying bean of type AccountServiceClient"
+- Thiếu bean KafkaTemplate tường minh -> Spring Boot 4.1.0 không tự động tạo
+  KafkaTemplate như các bản cũ. Thêm @Bean ProducerFactory<Object,Object> và
+  @Bean KafkaTemplate<Object,Object> trực tiếp trong class Application
+  Lỗi: "No qualifying bean of type KafkaTemplate"
+Điều tra: mvnw clean install (chạy cả test) để lộ lỗi UnsatisfiedDependencyException;
+dùng mvnw dependency:tree | Select-String "kafka" để xác nhận spring-kafka
+có thật trong classpath (loại trừ nghi ngờ thiếu dependency).
+
+FraudDetectionService.java:
+- Sửa kiểu field "private final KafkaTemplate<String, Object> kafkaTemplate"
+  -> đổi thành "KafkaTemplate<Object, Object>" để khớp với bean khai báo tường minh
+  ở FraudDetectionServiceApplication.java
+
+application.yaml:
+- Lỗi thụt lề nghiêm trọng: "data:" và "kafka:" đứng ngang hàng với "spring:"
+  thay vì nằm bên trong nó; "kafka:" còn bị lặp lồng 2 cấp (kafka.kafka.*)
+  -> khiến Spring đọc sai property "spring.kafka.bootstrap-servers"
+- Sửa: thụt lề đúng "data:" và "kafka:" vào bên trong "spring:", xóa cấp "kafka:"
+  lặp thừa
+Điều tra: Get-Content application.yaml qua PowerShell/Notepad để so sánh cấu trúc thụt lề.
+
+=== transaction-service ===
+
+TransactionService.java:
+- Method "blockAccountAndCompensate(...)" được gọi ở dòng 125 (case sai OTP)
+  nhưng chưa từng được định nghĩa trong class -> "cannot find symbol"
+- Viết mới method này theo đúng pattern của method có sẵn "compensateTransaction"
+  (hoàn tiền qua accountServiceClient.creditBalance, set TransactionStatus.FLAGGED,
+  publish Kafka event qua kafkaTemplate.send)
+Điều tra: mvnw clean compile; dùng PowerShell for-loop in số dòng thật để định vị
+chính xác dòng 125; Select-String tìm tất cả chỗ gọi "compensateTransaction" để
+lấy pattern tham chiếu; đọc enum TransactionStatus.java xác nhận dùng FLAGGED
+là đúng (không có status BLOCKED riêng).
+
+=== payment-service ===
+
+PaymentController.java:
+- Thiếu "import com.razorpay.RazorpayException;"
+
+PaymentService.java:
+- Thiếu "import com.razorpay.RazorpayClient;"
+Điều tra: mvnw clean compile trực tiếp, xác nhận dependency razorpay-java trong
+pom.xml đã đúng (đã thêm từ trước), lỗi chỉ do thiếu import ở tầng code.
+
+=== Kết quả cuối ===
+Tất cả 6 module pass "mvnw clean install" (compile + test contextLoads):
+account-service, api-gateway, fraud-detection-service, notification-service,
+payment-service, transaction-service.
+
+Còn 2 warning không chặn build, để xử lý sau:
+- JsonSerializer (Kafka) deprecated trong FraudDetectionServiceApplication.java
+- Trùng class org.json.JSONObject giữa 2 jar khác nhau trong payment-service
+
+
+
+
+-------------------
+
+
+fix: resolve all build errors across 6 microservices (compile + tests passing)
+
+=== account-service ===
+
+pom.xml:
+- Wrong: spring-boot-starter-webmvc (this artifact doesn't exist) -> Fixed: spring-boot-starter-web
+- Wrong: spring-boot-starter-kafka (this artifact doesn't exist) -> Fixed: spring-kafka (groupId org.springframework.kafka)
+- Removed: spring-boot-starter-actuator-test, -data-jpa-test, -kafka-test, -validation-test,
+  -webmvc-test (Spring Boot does not ship a separate "*-test" artifact for every
+  starter) -> Replaced with: spring-boot-starter-test + spring-kafka-test
+How it was found: the IDE kept showing stale errors that didn't match reality
+because of IntelliJ's build cache. Confirmed the real state by running
+"mvnw clean compile" directly in the terminal, bypassing the IDE entirely.
+
+Account.java:
+- The file was completely missing its "package com.banking.accountservice.entity;"
+  line at the top
+Found using: Get-Content Account.java | Select-Object -First 15
+
+AccountRepository.java:
+- Missing "import com.banking.accountservice.entity.Account;"
+- Typo in a method name: "existByEmail" -> fixed to "existsByEmail" (missing
+  the letter "s", so it didn't match the method call in AccountService.java)
+Found using: mvnw clean compile, reading each "cannot find symbol" error line by line
+
+AccountService.java:
+- Missing "import com.banking.accountservice.entity.Account;"
+
+IntelliJ project settings:
+- Root cause of why the IDE kept showing old errors even after pom.xml was
+  already correct: the IDE wasn't delegating its build to Maven. Fixed via
+  Settings > Build Tools > Maven > Runner > enabled
+  "Delegate IDE build/run actions to Maven"
+
+=== api-gateway ===
+
+pom.xml:
+- Wrong: spring-cloud-starter-gateway-server-webmvc (didn't match the Reactive-style
+  code using Mono/KeyResolver) -> Fixed: spring-cloud-starter-gateway-server-webflux
+How it was found: reading RateLimiterConfig.java showed imports for
+reactor.core.publisher.Mono and
+org.springframework.cloud.gateway.filter.ratelimit.KeyResolver, which only exist
+in the reactive (WebFlux) version of Spring Cloud Gateway - compared that against
+the artifactId declared in pom.xml.
+
+=== fraud-detection-service ===
+
+pom.xml:
+- Same wrong artifact ids as account-service (webmvc->web, wrong kafka starter,
+  the fake "*-test" artifacts)
+- Added: spring-cloud-starter-openfeign (was completely missing, needed for
+  the @FeignClient annotation to work)
+- Added: a <dependencyManagement> block importing the spring-cloud-dependencies
+  BOM (was completely missing, needed so Maven knows which Spring Cloud
+  version to use)
+
+FraudDetectionServiceApplication.java:
+- Missing @EnableFeignClients -> Spring couldn't create a bean for
+  AccountServiceClient
+  Error seen: "No qualifying bean of type AccountServiceClient"
+- Missing an explicit KafkaTemplate bean -> Spring Boot 4.1.0 no longer
+  auto-creates a KafkaTemplate bean the way older versions did. Fixed by adding
+  a @Bean method for ProducerFactory<Object,Object> and a @Bean method for
+  KafkaTemplate<Object,Object> directly inside the Application class
+  Error seen: "No qualifying bean of type KafkaTemplate"
+How it was found: ran "mvnw clean install" (which also runs tests) to surface
+the UnsatisfiedDependencyException; used
+"mvnw dependency:tree | Select-String kafka" to confirm spring-kafka really
+was present in the classpath (ruling out a missing-dependency theory).
+
+FraudDetectionService.java:
+- Changed the field type from
+  "private final KafkaTemplate<String, Object> kafkaTemplate"
+  to "KafkaTemplate<Object, Object>" so it matches the bean type declared
+  explicitly in FraudDetectionServiceApplication.java
+
+application.yaml:
+- Serious indentation mistake: "data:" and "kafka:" were sitting at the same
+  indent level as "spring:" instead of nested inside it; "kafka:" was also
+  duplicated one level deeper (kafka.kafka.*) -> this made Spring read the
+  wrong property path instead of the real
+  "spring.kafka.bootstrap-servers"
+- Fix: properly indented "data:" and "kafka:" to sit inside "spring:", removed
+  the duplicated extra "kafka:" level
+How it was found: compared the indentation structure by viewing the file with
+Get-Content in PowerShell and Notepad.
+
+=== transaction-service ===
+
+TransactionService.java:
+- The method "blockAccountAndCompensate(...)" was being called on line 125
+  (the "wrong OTP" case) but had never actually been written anywhere in the
+  class -> caused a "cannot find symbol" error
+- Wrote the missing method, following the same pattern as the existing
+  "compensateTransaction" method (refund the money via
+  accountServiceClient.creditBalance, set the status to
+  TransactionStatus.FLAGGED, publish a Kafka event via kafkaTemplate.send)
+How it was found: ran "mvnw clean compile"; used a PowerShell loop to print
+real line numbers and pinpoint line 125 exactly; used Select-String to find
+every place "compensateTransaction" was called, to use as a reference pattern;
+checked the TransactionStatus.java enum to confirm FLAGGED was the right
+status to reuse (there's no separate BLOCKED status).
+
+=== payment-service ===
+
+PaymentController.java:
+- Missing "import com.razorpay.RazorpayException;"
+
+PaymentService.java:
+- Missing "import com.razorpay.RazorpayClient;"
+How it was found: ran "mvnw clean compile" directly; confirmed the
+razorpay-java dependency in pom.xml was already correct (added earlier), so
+the error was purely a missing import at the code level.
+
+=== Final result ===
+All 6 modules now pass "mvnw clean install" (both compiling and passing the
+contextLoads test):
+account-service, api-gateway, fraud-detection-service, notification-service,
+payment-service, transaction-service.
+
+Two warnings remain that do not block the build, left for later cleanup:
+- JsonSerializer (Kafka) is deprecated, used in FraudDetectionServiceApplication.java
+- Duplicate org.json.JSONObject class found in two different jar files inside
+  payment-service

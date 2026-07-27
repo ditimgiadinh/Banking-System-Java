@@ -3,7 +3,8 @@ package com.banking.frauddetectionservice.service;
 import com.banking.frauddetectionservice.client.AccountServiceClient;
 import com.banking.frauddetectionservice.model.FraudCheckResult;
 import lombok.RequiredArgsConstructor;
-import lombok.Value;
+//import lombok.Value;
+import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -21,7 +22,9 @@ import java.util.concurrent.TimeUnit;
 public class FraudDetectionService {
 
     private final AccountServiceClient accountServiceClient;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    //private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final KafkaTemplate<Object, Object> kafkaTemplate;
+
     private final RedisTemplate<String,String> redisTemplate;
 
     @Value("${fraud.max-transactions-per-minute}")

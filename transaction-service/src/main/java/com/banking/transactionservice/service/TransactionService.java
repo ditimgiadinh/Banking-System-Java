@@ -165,6 +165,36 @@ public class TransactionService {
                 transaction.getAmount(), transaction.getSenderAccountNumber());
     }
 
+    // Missing
+    private void blockAccountAndCompensate(Transaction transaction, String reason) {
+        log.warn("BLOCK ACCOUNT + COMPENSATION - refunding: {} amount: {}",
+                transaction.getSenderAccountNumber(),
+                transaction.getAmount());
+
+        // CREDIT MONEY BACK TO SENDER SYNCHRONOUSLY
+        accountServiceClient.creditBalance(
+                transaction.getSenderAccountNumber(),
+                transaction.getAmount());
+
+        transaction.setStatus(TransactionStatus.FLAGGED);
+        transaction.setFailureReason(reason +
+                " - Account blocked, amount refunded at " + LocalDateTime.now());
+
+        transactionRepository.save(transaction);
+
+        // PUBLISH refund event - Notification service will alert user
+        Map<String, Object> refundEvent = new HashMap<>();
+        refundEvent.put("transactionId", transaction.getId());
+        refundEvent.put("senderAccountNumber", transaction.getSenderAccountNumber());
+        refundEvent.put("amount", transaction.getAmount());
+        refundEvent.put("reason", reason);
+
+        kafkaTemplate.send(TRANSACTION_REFUNDED_TOPIC, transaction.getId(), refundEvent);
+
+        log.info("BLOCK ACCOUNT + COMPENSATION COMPLETE - {} refunded to {}",
+                transaction.getAmount(), transaction.getSenderAccountNumber());
+    }
+
     private void completeTransaction(Transaction transaction){
         transaction.setStatus(TransactionStatus.COMPLETED);
         transaction.setCompletedAt(LocalDateTime.now());

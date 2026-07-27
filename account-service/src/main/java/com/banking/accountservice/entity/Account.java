@@ -1,3 +1,4 @@
+package com.banking.accountservice.entity;
 import com.banking.accountservice.entity.AccountStatus;
 import com.banking.accountservice.entity.AccountType;
 import jakarta.persistence.*;

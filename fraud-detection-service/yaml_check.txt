@@ -1,0 +1,60 @@
+﻿spring:
+  application:
+    name: fraud-detection-service
+
+  # FIX (27/07/2026): "data" bá»‹ sai thá»¥t lá» trong file gá»‘c â€” Ä‘ang Ä‘á»©ng ngang
+  # hÃ ng vá»›i "spring" (thá»¥t lá» 0 khoáº£ng tráº¯ng) thay vÃ¬ náº±m bÃªn trong "spring".
+  # Sai: property Ä‘Æ°á»£c Ä‘á»c thÃ nh "data.redis.host" (khÃ´ng tá»“n táº¡i)
+  # ÄÃºng: pháº£i lÃ  "spring.data.redis.host" Ä‘á»ƒ Spring Boot nháº­n Ä‘Ãºng cáº¥u hÃ¬nh Redis.
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  # FIX (27/07/2026): "kafka" bá»‹ sai thá»¥t lá» TÆ¯Æ NG Tá»° "data" á»Ÿ trÃªn â€” file gá»‘c
+  # cÃ³ "kafka:" Ä‘á»©ng ngang hÃ ng vá»›i "spring:", rá»“i láº¡i cÃ³ thÃªm 1 dÃ²ng "kafka:"
+  # lá»“ng bÃªn trong nÃ³ ná»¯a (kafka.kafka.bootstrap-servers), khiáº¿n Spring khÃ´ng
+  # tÃ¬m tháº¥y property "spring.kafka.bootstrap-servers" tháº­t sá»± cáº§n thiáº¿t.
+  # ÄÃ¢y chÃ­nh lÃ  nguyÃªn nhÃ¢n bean KafkaTemplate<String, Object> khÃ´ng Ä‘Æ°á»£c táº¡o,
+  # gÃ¢y lá»—i: "No qualifying bean of type 'org.springframework.kafka.core.KafkaTemplate'"
+  # ÄÃ£ xÃ³a dÃ²ng "kafka:" bá»‹ láº·p thá»«a, chá»‰ giá»¯ láº¡i Ä‘Ãºng 1 cáº¥p "kafka:" bÃªn trong "spring:".
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: account-service-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring:
+          json:
+            trusted:
+              packages: "*"
+            use:
+              type:
+                headers: false
+              value:
+                default:
+                  type: java.util.HashMap
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+server:
+  port: 8084
+
+# Account Service URL for Feign Client
+account:
+  service:
+    url: http://localhost:8081
+
+fraud:
+  max-transactions-per-minute: 5
+  suspicious-amount-multiplier: 5
+  max-balance-percentage: 0.90
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
