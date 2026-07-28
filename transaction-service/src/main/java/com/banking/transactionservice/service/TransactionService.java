@@ -196,6 +196,12 @@ public class TransactionService {
     }
 
     private void completeTransaction(Transaction transaction){
+
+        // SAGA STEP 3: Credit receiver
+        accountServiceClient.creditBalance(
+                transaction.getReceiverAccountNumber(),
+                transaction.getAmount());
+
         transaction.setStatus(TransactionStatus.COMPLETED);
         transaction.setCompletedAt(LocalDateTime.now());
         transactionRepository.save(transaction);

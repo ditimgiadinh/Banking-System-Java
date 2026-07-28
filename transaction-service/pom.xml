@@ -56,6 +56,49 @@
 			<artifactId>spring-cloud-starter-openfeign</artifactId>
 		</dependency>
 
+		<!--
+			  FIX (27/07/2026): Thiếu jackson-databind gây lỗi khi start transaction-service.
+
+			  NGUYÊN NHÂN GỐC:
+			  Từ Spring Boot 4, starter "spring-boot-starter-web" đã bị đổi tên thành
+			  "spring-boot-starter-webmvc" và KHÔNG còn tự động kéo theo Jackson nữa
+			  (khác với Spring Boot 3, nơi spring-boot-starter-web luôn mang theo
+			  spring-boot-starter-json chứa jackson-databind).
+
+			  Trong Spring Boot 4, Jackson được tách thành starter riêng
+			  (spring-boot-starter-jackson) và nâng cấp lên Jackson 3, đổi package
+			  từ "com.fasterxml.jackson.*" sang "tools.jackson.*".
+
+			  Tuy nhiên, class JsonSerializer/JsonDeserializer của Spring Kafka
+			  (org.springframework.kafka.support.serializer.JsonDeserializer) vẫn
+			  dùng API Jackson 2 cũ (com.fasterxml.jackson.databind.JavaType) để
+			  serialize/deserialize message. Vì pom.xml gốc chỉ có
+			  "spring-boot-starter-webmvc" (không mang Jackson) mà không có thêm
+			  Jackson 2 databind nào khác, nên khi KafkaConsumer khởi tạo
+			  Deserializers, JVM không tìm thấy class JavaType trên classpath.
+
+			  HẬU QUẢ (chuỗi lỗi thực tế gặp phải):
+			  ClassNotFoundException: com.fasterxml.jackson.databind.JavaType
+				-> NoClassDefFoundError: com/fasterxml/jackson/databind/JavaType
+				  -> KafkaException: Failed to construct kafka consumer
+					-> Failed to start bean 'internalKafkaListenerEndpointRegistry'
+					  -> Application run failed (context refresh bị cancel toàn bộ)
+
+			  CÁCH SỬA:
+			  Thêm trực tiếp dependency jackson-databind (Jackson 2 classic, group
+			  com.fasterxml.jackson.core) để cung cấp lại class JavaType mà
+			  Spring Kafka JsonSerializer/JsonDeserializer cần. Không cần khai báo
+			  version vì đã được spring-boot-starter-parent quản lý qua BOM.
+
+			  LƯU Ý: Cần áp dụng fix tương tự cho account-service, payment-service,
+			  fraud-detection-service nếu các service này cũng dùng
+			  spring-boot-starter-webmvc + Kafka JsonSerializer/JsonDeserializer.
+		-->
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>com.mysql</groupId>
 			<artifactId>mysql-connector-j</artifactId>

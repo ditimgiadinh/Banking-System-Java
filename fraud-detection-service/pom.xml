@@ -108,6 +108,11 @@
 			<optional>true</optional>
 		</dependency>
 
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+		</dependency>
+
 		<!--
           FIX (27/07/2026): SỬA/XÓA - Spring Boot không có artifact "*-test"
           riêng cho từng starter. Dòng cũ (giữ lại để đối chiếu):

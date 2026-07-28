@@ -7,48 +7,124 @@ spring:
       port: 6379
   cloud:
     gateway:
-      routes:
+      server:
+        webflux:
+          routes:
+            # Account service routes
+            - id: account-service
+              uri: http://localhost:8081
+              predicates:
+                - Path=/api/v1/accounts/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    redis-rate-limiter.replenishRate: 10
+                    redis-rate-limiter.burstCapacity: 20
+            # Transaction service routes
+            - id: transaction-service
+              uri: http://localhost:8082
+              predicates:
+                - Path=/api/v1/transactions/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    redis-rate-limiter.replenishRate: 10
+                    redis-rate-limiter.burstCapacity: 20
+            # Payment service routes
+            - id: payment-service
+              uri: http://localhost:8083
+              predicates:
+                - Path=/api/v1/payments/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    redis-rate-limiter.replenishRate: 5
+                    redis-rate-limiter.burstCapacity: 10
 
-        # Account service routes
-        - id: account-service
-          uri: http://localhost:8081
-          predicates:
-            - Path=/api/v1/account/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
+server:
+  port: 8080
 
-        # Transaction service routes
-        - id: transaction-service
-          uri: http://localhost:8082
-          predicates:
-            - Path=/api/v1/transactions/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    gateway:
+      access: unrestricted
 
-        # Payment service routes
-        - id: payment-service
-          uri: http://localhost:8083
-          predicates:
-            - Path=/api/v1/payments/**
-          filters:
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 5
-                redis-rate-limiter.burstCapacity: 10
-
-  server:
-    port: 8080
-
-  management:
-    endpoints:
-      web:
-        exposure:
-          include: health,info,gateway
-
-
+# ============================================================================
+# FIX (28/07/2026): Gateway routes không hoạt động - Property prefix sai
+# ============================================================================
+#
+# TRIỆU CHỨNG:
+#   - Mọi request qua gateway (POST http://localhost:8080/api/v1/accounts)
+#     đều trả về 404 Not Found, dù account-service (port 8081) hoạt động
+#     bình thường khi gọi trực tiếp.
+#   - Log khởi động không báo lỗi gì cả (không exception, không warning liên
+#     quan đến route) -> gây khó nhận diện vì trông như app start thành công.
+#
+# QUÁ TRÌNH ĐIỀU TRA:
+#   1. Loại trừ nguyên nhân do path/predicate sai (đã kiểm tra Path=
+#      /api/v1/accounts/** khớp đúng path gọi).
+#   2. Loại trừ nguyên nhân do indentation sai trong yml (server/management
+#      bị lồng nhầm vào trong spring: - đã sửa nhưng vẫn lỗi).
+#   3. Loại trừ nguyên nhân do IntelliJ chạy bản build cũ trong target/classes
+#      (đã rebuild sạch bằng `mvnw clean compile`, xác nhận target/classes
+#      chứa đúng bản yml mới nhất bằng lệnh `type target\classes\application.yaml`).
+#   4. DẤU HIỆU QUYẾT ĐỊNH nằm trong log khởi động Spring Boot, dòng:
+#
+#         o.s.b.a.e.web.EndpointLinksResolver : Exposing 2 endpoints
+#         beneath base path '/actuator'
+#
+#      Trong khi application.yaml đã khai báo:
+#         management.endpoints.web.exposure.include: health,info,gateway
+#      -> nghĩa là phải có 3 endpoint (health, info, gateway) được expose,
+#      nhưng log chỉ báo 2 (health, info - là default của Spring Boot khi
+#      không có config gì thêm).
+#
+#      => Con số "2 thay vì 3" là bằng chứng cho thấy Spring Boot đang KHÔNG
+#         đọc/áp dụng đúng nội dung file yml, dù file trên đĩa đã đúng.
+#         Đây chính là đầu mối để nghi ngờ property "gateway" mà ứng dụng
+#         nhận diện được KHÔNG PHẢI do actuator bị chặn quyền truy cập, mà
+#         do chính bean/module Gateway Actuator Endpoint KHÔNG ĐƯỢC TẠO RA -
+#         tức là autoconfiguration của Gateway không kích hoạt.
+#
+#   5. Từ đó gọi thử GET /actuator/gateway/routes -> trả về 200 OK nhưng
+#      body là mảng RỖNG []. Actuator hoạt động tốt (không phải lỗi actuator),
+#      nhưng route list rỗng -> xác nhận: toàn bộ khối `spring.cloud.gateway
+#      .routes` trong yml KHÔNG ĐƯỢC SPRING CLOUD GATEWAY NHẬN DIỆN.
+#
+# NGUYÊN NHÂN GỐC:
+#   Từ Spring Cloud Gateway 5.x (dùng trong Spring Cloud 2025.1.2 / Spring
+#   Boot 4.x), module Gateway được tách thành 2 biến thể độc lập
+#   (server-webflux và server-webmvc) để cho phép dùng song song trong
+#   cùng 1 ứng dụng. Do đó property prefix để khai báo route ĐÃ ĐỔI:
+#
+#     Cũ (Gateway 4.x):      spring.cloud.gateway.routes
+#     Mới (Gateway 5.x,
+#          webflux variant): spring.cloud.gateway.server.webflux.routes
+#
+#   File yml gốc dùng prefix cũ `spring.cloud.gateway.routes`. Spring Boot
+#   KHÔNG báo lỗi khi gặp property không xác định trong file yml theo mặc
+#   định - nó chỉ lặng lẽ bỏ qua toàn bộ khối đó. Vì vậy route list rỗng mà
+#   không có bất kỳ log lỗi/warning nào, khiến bug rất khó phát hiện qua
+#   log thông thường và chỉ lộ ra qua GET /actuator/gateway/routes.
+#
+# CÁCH FIX:
+#   Thêm 2 cấp `server: / webflux:` vào giữa `gateway:` và `routes:`.
+#
+# CÁCH XÁC MINH SAU KHI FIX:
+#   1. GET http://localhost:8080/actuator/gateway/routes
+#      -> phải trả về mảng có đủ 3 route (account/transaction/payment-service)
+#   2. Log khởi động phải hiện đúng:
+#         Exposing 3 endpoints beneath base path '/actuator'
+#   3. POST http://localhost:8080/api/v1/accounts -> forward đúng tới
+#      account-service (port 8081), không còn 404.
+#
+# BÀI HỌC: khi thêm property include vào management.endpoints.web.exposure
+# nhưng log "Exposing N endpoints" không khớp số lượng kỳ vọng, đó là dấu
+# hiệu rất đáng tin cậy rằng application.yaml đang không được áp dụng đúng -
+# hoặc do sai vị trí file, sai property key/prefix, hoặc do build cũ chưa
+# được refresh. Luôn đối chiếu số N với số endpoint bạn thực sự khai báo.
+# ============================================================================
