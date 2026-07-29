@@ -1,55 +1,101 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
-
+resources:
+  - account-configmap.yaml
+  - account-secret.yaml
+  - mysql-deployment.yaml
+  - mysql-service.yaml
+  - zookeeper-deployment.yaml
+  - kafka-deployment.yaml
+  - redis-deployment.yaml
 helmGlobals:
   chartHome: ../../charts
-
 helmCharts:
   - name: microservice
     releaseName: account-service
     namespace: banking-system
     valuesInline:
       serviceName: account-service
+      configMapName: account-config
+      secretName: account-secret
       image:
         repository: your-registry/account-service
-
+      service:
+        port: 8081
   - name: microservice
     releaseName: payment-service
     namespace: banking-system
     valuesInline:
       serviceName: payment-service
+      configMapName: payment-service-config
+      secretName: account-secret
       image:
         repository: your-registry/payment-service
-
+      service:
+        port: 8083
+      env:
+        DB_HOST: mysql-service
+        DB_PORT: "3306"
+        DB_NAME: payment_db
+        KAFKA_HOST: kafka-service
+        KAFKA_PORT: "9092"
   - name: microservice
     releaseName: fraud-detection-service
     namespace: banking-system
     valuesInline:
       serviceName: fraud-detection-service
+      configMapName: fraud-detection-service-config
+      secretName: account-secret
       image:
         repository: your-registry/fraud-detection-service
-
+      service:
+        port: 8084
+      env:
+        KAFKA_HOST: kafka-service
+        KAFKA_PORT: "9092"
+        REDIS_HOST: redis-service
+        REDIS_PORT: "6379"
   - name: microservice
     releaseName: transaction-service
     namespace: banking-system
     valuesInline:
       serviceName: transaction-service
+      configMapName: transaction-service-config
+      secretName: account-secret
       image:
         repository: your-registry/transaction-service
-
+      service:
+        port: 8082
+      env:
+        DB_HOST: mysql-service
+        DB_PORT: "3306"
+        DB_NAME: transaction_db
+        KAFKA_HOST: kafka-service
+        KAFKA_PORT: "9092"
   - name: microservice
     releaseName: notification-service
     namespace: banking-system
     valuesInline:
       serviceName: notification-service
+      configMapName: notification-service-config
+      secretName: account-secret
       image:
         repository: your-registry/notification-service
-
+      service:
+        port: 8085
+      env:
+        KAFKA_HOST: kafka-service
+        KAFKA_PORT: "9092"
   - name: microservice
     releaseName: api-gateway
     namespace: banking-system
     valuesInline:
       serviceName: api-gateway
+      configMapName: api-gateway-config
       image:
         repository: your-registry/api-gateway
+      service:
+        port: 8080
+      env:
+        REDIS_HOST: redis-service
+        REDIS_PORT: "6379"

@@ -1,9 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 resources:
   - ../../base
-
 patches:
   - patch: |-
       - op: replace
@@ -11,45 +9,64 @@ patches:
         value: 1
     target:
       kind: Deployment
-
   - patch: |-
       - op: add
         path: /metadata/namespace
         value: banking-dev
     target:
       kind: Deployment
-
   - patch: |-
       - op: add
         path: /metadata/namespace
         value: banking-dev
     target:
       kind: Service
-
   - patch: |-
       - op: add
         path: /metadata/namespace
         value: banking-dev
     target:
       kind: ConfigMap
-
   - patch: |-
-      - op: replace
+      - op: add
+        path: /metadata/namespace
+        value: banking-dev
+    target:
+      kind: Secret
+  - patch: |-
+      - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
-        value: Never
+        value: IfNotPresent
     target:
       kind: Deployment
-
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          limits:
+            cpu: "1"
+            memory: 1Gi
+          requests:
+            cpu: 200m
+            memory: 256Mi
+    target:
+      kind: Deployment
 images:
   - name: your-registry/account-service
+    newName: localhost:5000/account-service
     newTag: dev-latest
   - name: your-registry/payment-service
+    newName: localhost:5000/payment-service
     newTag: dev-latest
   - name: your-registry/fraud-detection-service
+    newName: localhost:5000/fraud-detection-service
     newTag: dev-latest
   - name: your-registry/transaction-service
+    newName: localhost:5000/transaction-service
     newTag: dev-latest
   - name: your-registry/notification-service
+    newName: localhost:5000/notification-service
     newTag: dev-latest
   - name: your-registry/api-gateway
+    newName: localhost:5000/api-gateway
     newTag: dev-latest

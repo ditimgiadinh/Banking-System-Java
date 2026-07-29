@@ -6,10 +6,18 @@ spring:
     name: transaction-service
 
   datasource:
-    url: jdbc:mysql://localhost:3306/transaction_db?createDatabaseIfNotExist=true
-    username: root
-    password: root
+    # Old config (local)
+    #url: jdbc:mysql://localhost:3306/transaction_db?createDatabaseIfNotExist=true
+    #username: root
+    #password: root
+    #driver-class-name: com.mysql.cj.jdbc.Driver
+
+    # New config (Kubernetes environment variables)
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}?createDatabaseIfNotExist=true
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+
   jpa:
     hibernate:
       ddl-auto: update
@@ -19,7 +27,12 @@ spring:
         dialect: org.hibernate.dialect.MySQLDialect
 
   kafka:
-    bootstrap-servers: localhost:9092
+    # Old config (local)
+    #bootstrap-servers: localhost:9092
+
+    # New config (Kubernetes environment variables)
+    bootstrap-servers: ${KAFKA_HOST}:${KAFKA_PORT}
+
     consumer:
       group-id: transaction-service-group
       auto-offset-reset: earliest
@@ -48,4 +61,9 @@ management:
 
 account:
   service:
-    url: http://localhost:8081
+    # Old config (local)
+    # url: http://localhost:8081
+    #url: http://localhost:8081
+
+    # New config (Kubernetes environment)
+    url: http://account-service:8081

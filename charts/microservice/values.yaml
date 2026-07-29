@@ -1,21 +1,17 @@
 serviceName: placeholder
 replicaCount: 1
-
 image:
   repository: your-registry/placeholder
   tag: latest
   pullPolicy: IfNotPresent
-
 service:
   port: 8080
-
 resources:
   requests:
-    cpu: 100m
+    cpu: 50m
     memory: 128Mi
   limits:
-    cpu: 500m
-    memory: 512Mi
-
+    cpu: 250m
+    memory: 256Mi
 env:
   SPRING_PROFILES_ACTIVE: default

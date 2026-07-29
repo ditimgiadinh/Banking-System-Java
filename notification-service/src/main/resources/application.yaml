@@ -1,8 +1,14 @@
 spring:
   application:
     name: notification-service
+
   kafka:
-    bootstrap-servers: localhost:9092
+    # Old config (local)
+    # bootstrap-servers: localhost:9092
+
+    # New config (Kubernetes environment variables)
+    bootstrap-servers: ${KAFKA_HOST}:${KAFKA_PORT}
+
     consumer:
       group-id: notification-service-group
       auto-offset-reset: earliest
@@ -19,12 +25,15 @@ spring:
             value:
               default:
                 type: java.util.HashMap
+
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
+
 server:
   port: 8085
+
 
 management:
   endpoints:

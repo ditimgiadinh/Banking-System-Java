@@ -8,18 +8,28 @@ spring:
   # Đúng: phải là "spring.data.redis.host" để Spring Boot nhận đúng cấu hình Redis.
   data:
     redis:
-      host: localhost
-      port: 6379
+      # Old config (local)
+      # host: localhost
+      # port: 6379
+
+      # New config (Kubernetes environment variables)
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
 
   # FIX (27/07/2026): "kafka" bị sai thụt lề TƯƠNG TỰ "data" ở trên — file gốc
   # có "kafka:" đứng ngang hàng với "spring:", rồi lại có thêm 1 dòng "kafka:"
   # lồng bên trong nó nữa (kafka.kafka.bootstrap-servers), khiến Spring không
   # tìm thấy property "spring.kafka.bootstrap-servers" thật sự cần thiết.
   # Đây chính là nguyên nhân bean KafkaTemplate<String, Object> không được tạo,
-  # gây lỗi: "No qualifying bean of type 'org.springframework.kafka.core.KafkaTemplate'"
+  # gây lỗi: "No qualifying bean of type 'org.apache.kafka.core.KafkaTemplate'"
   # Đã xóa dòng "kafka:" bị lặp thừa, chỉ giữ lại đúng 1 cấp "kafka:" bên trong "spring:".
   kafka:
-    bootstrap-servers: localhost:9092
+    # Old config (local)
+    # bootstrap-servers: localhost:9092
+
+    # New config (Kubernetes environment variables)
+    bootstrap-servers: ${KAFKA_HOST}:${KAFKA_PORT}
+
     consumer:
       group-id: fraud-service-group
       auto-offset-reset: earliest
@@ -36,22 +46,31 @@ spring:
               value:
                 default:
                   type: java.util.HashMap
+
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
 
+
 server:
   port: 8084
+
 
 # Account Service URL for Feign Client
 account:
   service:
-    url: http://localhost:8081
+    # Old config (local)
+    # url: http://localhost:8081
+
+    # New config (Kubernetes environment)
+    url: http://account-service:8081
+
 
 fraud:
   max-transactions-per-minute: 5
   suspicious-amount-multiplier: 5
   max-balance-percentage: 0.90
+
 
 management:
   endpoints:

@@ -115,3 +115,279 @@ git commit -m "Add Helm chart and Kustomize overlays for dev/staging/prod enviro
 git push origin developer     # đẩy lên nhánh developer trên remote
 
 Ý nghĩa: lưu toàn bộ cấu hình vào lịch sử Git, đồng đội khác pull về là có ngay bộ chart + overlay để deploy, không cần làm lại từ đầu.
+
+
+-----------
+
+kubectl kustomize k8s\base\ --enable-helm --load-restrictor LoadRestrictionsNone
+
+----
+ tree k8s /F
+ 
+  kubectl kustomize k8s\base --enable-helm --load-restrictor LoadRestrictionsNone
+  
+  -----
+  
+  kubectl apply -k k8s\base --enable-helm --load-restrictor LoadRestrictionsNone
+  
+  ---
+  
+  kubectl kustomize k8s\base --enable-helm --load-restrictor LoadRestrictionsNone > banking-rendered.yaml
+  
+  --
+ kubectl apply -f .\banking-rendered.yaml
+ 
+ --
+ 
+ kubectl get pods
+ 
+ ---
+ 
+ PS D:\antn\Admin\Java-Banking-Project\banking-system> kubectl get pods
+NAME                                       READY   STATUS              RESTARTS   AGE
+account-service-68f47cd6cb-m54mp           0/1     ErrImagePull        0          40s
+api-gateway-76854cdbc8-pfklp               0/1     ImagePullBackOff    0          40s
+fraud-detection-service-589cfdf7f4-dw7r5   0/1     ErrImagePull        0          40s
+notification-service-74df6b8568-mtknt      0/1     ContainerCreating   0          40s
+payment-service-5fd89ccc98-qjjm4           0/1     ContainerCreating   0          40s
+transaction-service-7cd77bf5db-mgq6v       0/1     ContainerCreating   0          40s
+PS D:\antn\Admin\Java-Banking-Project\banking-system>
+
+
+---------
+
+kubectl describe pod account-service-68f47cd6cb-m54mp
+
+
+kubectl apply -f banking-rendered.yaml
+
+
+kubectl logs account-service-774f77dbcf-d69nk -n banking-dev --tail=50
+
+--------------
+
+# Incident Postmortem: banking-dev Pods Failing After Docker Desktop Restart
+
+## Summary
+
+After restarting Docker Desktop, `kubectl get pods -n banking-dev` no longer showed 9/9 pods `Running`. Six of the nine services (all custom-built Java microservices) went into `ImagePullBackOff` / `ErrImagePull`. The three infrastructure pods pulled from the local registry mirror (`kafka`, `mysql`, `zookeeper`) and `redis` (pulled from Docker Hub) were unaffected.
+
+## Symptom
+
+```
+kubectl get pods -n banking-dev
+```
+
+```
+account-service-...           0/1   ImagePullBackOff
+api-gateway-...                0/1   ImagePullBackOff
+fraud-detection-service-...    0/1   ErrImagePull
+notification-service-...       0/1   ErrImagePull
+payment-service-...            0/1   ImagePullBackOff
+transaction-service-...        0/1   ErrImagePull
+kafka-...                      1/1   Running
+mysql-...                      1/1   Running
+redis-...                      1/1   Running
+zookeeper-...                  1/1   Running
+```
+
+## Diagnostic Steps
+
+### 1. Inspect pod events
+
+```
+kubectl describe pod <pod-name> -n banking-dev
+```
+
+Relevant event:
+
+```
+Failed to pull image "your-registry/account-service:latest":
+failed to resolve reference "docker.io/your-registry/account-service:latest":
+pull access denied, repository does not exist or may require authorization
+```
+
+This showed the pod was trying to pull `your-registry/account-service:latest` — a name that resolves to Docker Hub (`docker.io/your-registry/...`), not to any real registry.
+
+### 2. Confirm the local registry itself was healthy
+
+```
+docker ps | findstr registry
+```
+
+Result: the `registry:2` container was up and listening on `0.0.0.0:5000`. This ruled out "registry container is down" as the cause.
+
+### 3. Compare the image actually built/pushed vs. the image referenced by the pod
+
+```
+docker images | findstr localhost:5000
+```
+
+Result: images were correctly tagged and present as `localhost:5000/<service>:dev-latest`. So the real, pushed image used the `localhost:5000` host and the `dev-latest` tag — neither of which matched what the pod was requesting (`your-registry/...:latest`).
+
+### 4. Proof the root cause was NOT a bug in the k8s/ manifest files
+
+This was the critical step — confirming the Kustomize configuration itself was correct, and the problem was an operational/process issue (how manifests were generated and applied), not a file content bug.
+
+**a. Confirm the dev overlay already declares the correct image mapping:**
+
+```
+type k8s\overlays\dev\kustomization.yaml
+```
+
+The file already contained an `images:` transformer:
+
+```yaml
+images:
+  - name: your-registry/account-service
+    newName: localhost:5000/account-service
+    newTag: dev-latest
+  # ...same pattern for the other 5 services
+```
+
+This confirms the overlay, if used to render, would correctly rewrite `your-registry/*` to `localhost:5000/*:dev-latest`.
+
+**b. Render directly from the dev overlay and inspect the output:**
+
+```
+kubectl kustomize k8s\overlays\dev --enable-helm --load-restrictor LoadRestrictionsNone > k8s\overlays\dev\banking-rendered.yaml
+Select-String "image:" k8s\overlays\dev\banking-rendered.yaml
+```
+
+(Note: use PowerShell's `Select-String`, not `findstr` — `kubectl kustomize` output on Windows is UTF-16, and `findstr` silently misses matches in Unicode files.)
+
+Result: every service image in the rendered output was correctly `localhost:5000/<service>:dev-latest`. This proved the overlay + transformer machinery worked exactly as designed — **the files in `k8s/` were not the bug.**
+
+**c. Find where the placeholder `your-registry` actually originates (expected — this is normal in `base`):**
+
+```
+Select-String "your-registry" charts\microservice\values.yaml
+Select-String "your-registry" k8s\base\kustomization.yaml
+```
+
+Result: `your-registry` is the intentional Helm chart default / base-layer placeholder value. It is expected to appear in `base` — it is only supposed to survive into the final manifest if `base` is applied directly instead of an environment overlay. Finding it in `base` is normal design, not a bug.
+
+**d. Definitive proof: inspect what was actually last applied to the live cluster**
+
+```
+kubectl get deployment account-service -n banking-dev -o jsonpath="{.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration}"
+```
+
+Result (before fix):
+
+```json
+"image":"your-registry/account-service:latest"
+```
+
+This is the smoking gun: the annotation Kubernetes stores from the actual `kubectl apply` proves that at some point, a manifest containing the raw `your-registry/*:latest` value (i.e., **not** rendered through the dev overlay's image transformer) was applied directly to the `banking-dev` namespace. This could only happen by applying from `k8s/base` (or an old/incorrect rendered file) instead of `k8s/overlays/dev`.
+
+## Root Cause
+
+The live deployments in `banking-dev` had been created/updated at some point by applying manifests rendered from `k8s/base` (or a stale rendered file), bypassing the `k8s/overlays/dev` Kustomize layer that rewrites `your-registry/*` → `localhost:5000/*:dev-latest`. As a result, the live Deployment objects referenced a non-existent image reference (`your-registry/<service>:latest`).
+
+This stayed hidden because the pods had already been scheduled and their images were cached in containerd on the Docker Desktop Kubernetes node (`desktop-control-plane`), so no actual pull was needed for them to stay `Running`. When Docker Desktop was restarted, containerd's image cache was cleared, forcing kubelet to re-pull the image — which then failed because `your-registry/<service>:latest` does not exist on any real registry.
+
+**In short:** the bug was in the *process* (applying from the wrong Kustomize layer), not in the content of any file under `k8s/`. The overlay's transformer logic was correct the whole time.
+
+## Fix
+
+1. Render manifests from the **dev overlay**, not `base`:
+   ```
+   kubectl kustomize k8s\overlays\dev --enable-helm --load-restrictor LoadRestrictionsNone > k8s\overlays\dev\banking-rendered.yaml
+   ```
+2. Verify the rendered output has correct images before applying:
+   ```
+   Select-String "image:" k8s\overlays\dev\banking-rendered.yaml
+   ```
+3. Apply the correctly rendered file:
+   ```
+   kubectl apply -f k8s\overlays\dev\banking-rendered.yaml
+   ```
+4. Confirm the fix stuck, by re-checking the live annotation:
+   ```
+   kubectl get deployment account-service -n banking-dev -o jsonpath="{.metadata.annotations.kubectl\.kubernetes\.io/last-applied-configuration}"
+   ```
+   Expected: `"image":"localhost:5000/account-service:dev-latest"`.
+
+After this, `kubectl get pods -n banking-dev` returned to `9/9 Running`.
+
+## Standing Rules to Prevent Recurrence
+
+1. **Always render/apply from `k8s/overlays/dev`** (or `staging`/`prod` as appropriate). Never run `kubectl apply -k k8s/base` or apply a file rendered from `base` directly — `base` is an incomplete template by design.
+2. **Keep the local registry container (`localhost:5000`) always running.** Check its restart policy:
+   ```
+   docker inspect registry --format "{{.HostConfig.RestartPolicy.Name}}"
+   ```
+   It should be `always` or `unless-stopped` so it survives Docker Desktop restarts.
+3. **After rebuilding a service image, always re-push it to `localhost:5000/<service>:dev-latest`** before redeploying — otherwise the cluster will silently keep running the previous image version under the same tag.
+4. Prefer `Select-String` over `findstr` when inspecting any file produced by `kubectl kustomize`, since that output is UTF-16 on Windows and `findstr` can silently return no matches even when the target string is present.
+
+
+---------------------
+
+Về cơ bản là có, nhưng "luôn luôn" thì mình cần nói rõ điều kiện đi kèm để bạn không bị bất ngờ nếu có lần lỡ tay:
+
+Sẽ luôn 9/9 Running nếu 3 điều kiện này giữ nguyên:
+
+Deployment hiện tại trên cluster vẫn giữ đúng image localhost:5000/xxx:dev-latest (đã xác nhận qua annotation last-applied-configuration) — điều này không tự đổi khi tắt/mở máy, nó chỉ đổi khi ai đó chạy kubectl apply với file sai.
+Container registry localhost:5000 tự khởi động lại cùng Docker Desktop (không bị xoá hoặc quên start).
+Không ai (kể cả chính bạn) vô tình kubectl apply -k k8s\base hoặc apply file rendered từ base thay vì từ overlays\dev.
+
+Vì Docker Desktop restart chỉ xoá cache image của containerd, không xoá cấu hình Deployment đã lưu trong etcd — nên chỉ cần image tồn tại trong registry để pull lại là đủ, không cần apply lại gì cả. Việc bạn tắt/mở laptop bình thường sẽ không đụng đến 3 điều kiện trên.
+
+Nếu muốn chắc chắn 100%, cứ tắt/mở laptop thử rồi chạy kubectl get pods -n banking-dev xem — nếu ra 9/9 thì xác nhận fix đã bền vững.
+
+
+-------------
+
+Dựa trên danh sách bạn từng muốn áp dụng (probes, HPA, PDB, NetworkPolicy, secrets, Ingress, GitOps, service mesh, observability), đây là gợi ý thứ tự triển khai theo độ ưu tiên thực tế — từ nền tảng đến nâng cao:
+
+1. Probes (Liveness/Readiness/Startup) — nên làm đầu tiên
+
+Vì hệ thống bạn vừa gặp sự cố pull image, probe sẽ giúp phát hiện sớm khi service "Running" nhưng thực chất chưa sẵn sàng (DB chưa connect, Kafka chưa ready...).
+
+yaml
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8081
+  initialDelaySeconds: 30
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8081
+
+Spring Boot Actuator đã hỗ trợ sẵn 2 endpoint này — chỉ cần bật management.endpoint.health.probes.enabled=true.
+
+2. Resource Requests/Limits chuẩn hoá + HPA
+
+Bạn đã có resources.limits/requests cơ bản. Bước tiếp theo là Horizontal Pod Autoscaler dựa trên CPU/memory, để tự scale khi tải tăng — rất hợp để demo kỹ năng "production-ready" trong CV/phỏng vấn.
+
+kubectl autoscale deployment payment-service --cpu-percent=70 --min=1 --max=5 -n banking-dev
+3. Secrets Management đúng chuẩn
+
+Hiện bạn dùng Secret thô (base64, không mã hoá thật). Nâng cấp lên:
+
+Sealed Secrets (Bitnami) — mã hoá secret để commit an toàn vào Git.
+Hoặc External Secrets Operator nếu muốn tích hợp Vault/AWS Secrets Manager sau này (kỹ năng rất được đánh giá cao).
+4. NetworkPolicy
+
+Namespace banking-dev hiện chưa có ranh giới network — mọi pod gọi được lẫn nhau tự do. Thêm NetworkPolicy để giới hạn, ví dụ chỉ api-gateway mới được gọi vào các service khác, không cho FE gọi thẳng payment-service.
+
+5. Ingress
+
+Thay vì mỗi service tự expose port riêng, dùng Ingress Controller (nginx-ingress) để có 1 điểm vào duy nhất, route theo path/host — gần với kiến trúc thật hơn.
+
+6. Observability (Prometheus + Grafana)
+
+Vì bạn đã có Spring Boot Actuator, chỉ cần thêm micrometer-registry-prometheus là có metrics ngay. Đây là kỹ năng có giá trị cao khi phỏng vấn vị trí backend/DevOps.
+
+7. PDB (PodDisruptionBudget) + GitOps (ArgoCD) — làm sau cùng
+
+PDB chỉ thực sự có ý nghĩa khi bạn đã có nhiều replicas + HPA. GitOps (ArgoCD) là bước nâng cao nhất — tự động sync cluster theo Git, phù hợp khi bạn đã quen thuộc toàn bộ workflow thủ công ở trên.
+
+Service mesh (Istio/Linkerd) — không ưu tiên lúc này
+
+Với quy mô 6 service demo, service mesh sẽ overkill và làm hệ thống phức tạp không cần thiết. Nên để cuối cùng, chỉ làm nếu bạn thực sự muốn học riêng công nghệ này.
+
+Bạn muốn bắt đầu từ Probes hay HPA trước? Mình có thể hướng dẫn implement chi tiết ngay.
