@@ -4,6 +4,7 @@ replicaCount: 1
 image:
   repository: your-registry/placeholder
   tag: latest
+  pullPolicy: IfNotPresent
 
 service:
   port: 8080

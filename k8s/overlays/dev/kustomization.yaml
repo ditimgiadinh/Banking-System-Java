@@ -33,6 +33,13 @@ patches:
     target:
       kind: ConfigMap
 
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+    target:
+      kind: Deployment
+
 images:
   - name: your-registry/account-service
     newTag: dev-latest
