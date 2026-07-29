@@ -1,0 +1,20 @@
+serviceName: placeholder
+replicaCount: 1
+
+image:
+  repository: your-registry/placeholder
+  tag: latest
+
+service:
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+env:
+  SPRING_PROFILES_ACTIVE: default

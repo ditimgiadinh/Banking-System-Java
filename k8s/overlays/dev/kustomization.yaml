@@ -1,0 +1,48 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+
+  - patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: banking-dev
+    target:
+      kind: Deployment
+
+  - patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: banking-dev
+    target:
+      kind: Service
+
+  - patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: banking-dev
+    target:
+      kind: ConfigMap
+
+images:
+  - name: your-registry/account-service
+    newTag: dev-latest
+  - name: your-registry/payment-service
+    newTag: dev-latest
+  - name: your-registry/fraud-detection-service
+    newTag: dev-latest
+  - name: your-registry/transaction-service
+    newTag: dev-latest
+  - name: your-registry/notification-service
+    newTag: dev-latest
+  - name: your-registry/api-gateway
+    newTag: dev-latest
