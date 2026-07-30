@@ -1,0 +1,14 @@
+
+
+# Hoặc nếu muốn chỉ bỏ workspace.xml
+.idea/workspace.xml
+
+# Kubernetes debug files
+dev/*.log
+dev/*.txt
+logs_baseline_*/
+*.current.log
+*.previous.log
+*.describe.txt
+pods_state.txt
+events.txt

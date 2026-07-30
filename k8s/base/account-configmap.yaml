@@ -5,6 +5,15 @@ metadata:
   name: account-config
 
 data:
+  # --- Cấu hình cũ ---
+  # DB_HOST: mysql-service
+  # DB_PORT: "3306"
+  # DB_NAME: account_db
+
+  # KAFKA_HOST: kafka-service
+  # KAFKA_PORT: "9092"
+
+  # --- Cấu hình mới (fix MySQL) ---
   DB_HOST: mysql-service
   DB_PORT: "3306"
   DB_NAME: account_db

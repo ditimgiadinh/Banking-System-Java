@@ -1,33 +1,28 @@
 apiVersion: apps/v1
 kind: Deployment
-
 metadata:
   name: account-service
-
 spec:
   replicas: 1
-
   selector:
     matchLabels:
       app: account-service
-
   template:
     metadata:
       labels:
         app: account-service
-
     spec:
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z -w2 mysql-service 3306; do echo waiting for mysql-service; sleep 3; done']
       containers:
         - name: account-service
-
           image: account-service:1.0
-
           ports:
             - containerPort: 8081
-
           envFrom:
             - configMapRef:
                 name: account-config
-
             - secretRef:
                 name: account-secret

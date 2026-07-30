@@ -34,9 +34,17 @@ patches:
     target:
       kind: Secret
   - patch: |-
+      # Old: IfNotPresent caused kubelet to keep using a stale cached image
+      # after rebuild/push, so newly built code never actually ran until a
+      # manual "kubectl rollout restart".
+      # - op: add
+      #   path: /spec/template/spec/containers/0/imagePullPolicy
+      #   value: IfNotPresent
+      # New: Always forces kubelet to re-pull from the local registry every
+      # deploy, so `docker push` + `kubectl apply` alone is enough.
       - op: add
         path: /spec/template/spec/containers/0/imagePullPolicy
-        value: IfNotPresent
+        value: Always
     target:
       kind: Deployment
   - patch: |-

@@ -1,50 +1,47 @@
 ﻿apiVersion: apps/v1
 kind: Deployment
-
 metadata:
   name: {{ .Values.serviceName }}
   labels:
     app: {{ .Values.serviceName }}
-
 spec:
   replicas: {{ .Values.replicaCount }}
-
   selector:
     matchLabels:
       app: {{ .Values.serviceName }}
-
   template:
     metadata:
       labels:
         app: {{ .Values.serviceName }}
-
     spec:
+      # New: optional initContainers block, only rendered if the chart caller
+      # (kustomization.yaml valuesInline) sets .Values.initContainers.
+      # Purpose: lets account/payment/transaction services wait for MySQL
+      # to accept TCP connections on port 3306 before the app container starts,
+      # preventing the Hibernate "Connection refused" crash-loop on boot.
+      {{- if .Values.initContainers }}
+      initContainers:
+        {{- toYaml .Values.initContainers | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Values.serviceName }}
-
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-
           imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
-
           ports:
             - containerPort: {{ .Values.service.port }}
-
           envFrom:
             {{- if .Values.configMapName }}
             - configMapRef:
                 name: {{ .Values.configMapName }}
             {{- end }}
-
             {{- if .Values.secretName }}
             - secretRef:
                 name: {{ .Values.secretName }}
             {{- end }}
-
           resources:
             requests:
               cpu: {{ .Values.resources.requests.cpu }}
               memory: {{ .Values.resources.requests.memory }}
-
             limits:
               cpu: {{ .Values.resources.limits.cpu }}
               memory: {{ .Values.resources.limits.memory }}
