@@ -33,6 +33,18 @@ patches:
         value: banking-dev
     target:
       kind: Secret
+  # THÊM MỚI (2026-07-31): thiếu patch namespace cho PersistentVolumeClaim.
+  # Lý do: mysql-pvc.yaml (thêm ở k8s/base để persist data MySQL) không có
+  # namespace khai báo sẵn -> khi apply, nó rơi về "default" thay vì
+  # "banking-dev" như mọi resource khác -> Deployment mysql (chạy trong
+  # banking-dev) không thấy được PVC (khác namespace) -> PVC bị Pending mãi,
+  # `kubectl get pvc -n banking-dev` trả rỗng, PVC thật nằm ở "default".
+  - patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: banking-dev
+    target:
+      kind: PersistentVolumeClaim
   - patch: |-
       # Old: IfNotPresent caused kubelet to keep using a stale cached image
       # after rebuild/push, so newly built code never actually ran until a

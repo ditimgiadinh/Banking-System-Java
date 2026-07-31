@@ -934,3 +934,131 @@ Nếu docker version cũng lỗi tương tự, và kubectl get pods lỗi luôn 
 Nếu kubectl get pods vẫn chạy được bình thường → cluster Kubernetes có thể vẫn đang chạy ổn, chỉ có phần Docker Engine API (dùng cho docker build, docker images...) bị lỗi riêng — ít nghiêm trọng hơn.
 
 Chạy 2 lệnh trên và cho mình biết kết quả. Nếu buộc phải restart Docker Desktop, nhắc lại điều quan trọng đã nói trước đó: vì MySQL chưa có PersistentVolume, restart sẽ làm mất toàn bộ dữ liệu MySQL hiện tại (database sẽ về trạng thái rỗng, createDatabaseIfNotExist=true sẽ tự tạo lại schema rỗng) — nhưng sẽ không ảnh hưởng gì tới fix crash-loop vừa làm (initContainer + Helm chart đã lưu trong file, không mất khi restart Docker Desktop).
+
+
+
+
+--------------------------------------------------
+
+Dựa trên toàn bộ file bạn đã gửi (Kafka/Zookeeper event-driven giữa account/transaction/fraud-detection, Razorpay ở payment-service, Redis chỉ ở transaction-service, DB riêng từng service, Helm chart vừa hoàn thiện), đây là các tính năng đáng đầu tư — xếp theo mức độ "impact cho hệ thống banking" và mức độ dễ làm:
+
+1. Idempotency cho Payment (ưu tiên cao nhất — bug tiền thật)
+Hiện PaymentController nhận request tạo payment nhưng chưa thấy cơ chế chặn duplicate (network retry, user bấm 2 lần, Razorpay webhook gọi lại). Thêm 1 cột idempotency_key unique + check trước khi tạo.
+
+payment-service/src/main/java/com/banking/paymentservice/controller/PaymentController.java
+payment-service/src/main/java/com/banking/paymentservice/entity/Payment.java
+payment-service/src/main/java/com/banking/paymentservice/service/PaymentService.java
+
+2. Circuit breaker + retry (Resilience4j) cho lời gọi liên service
+fraud-detection-service và transaction-service đều gọi thẳng AccountServiceClient — nếu account-service chậm/down, cả chuỗi sập theo. Thêm Resilience4j (circuit breaker, retry, timeout, fallback).
+
+fraud-detection-service/src/main/java/com/banking/frauddetectionservice/client/AccountServiceClient.java
+transaction-service/src/main/java/com/banking/transactionservice/client/AccountServiceClient.java
+pom.xml của cả 2 service (thêm dependency)
+application.yaml của cả 2 service (cấu hình resilience4j.circuitbreaker)
+
+3. Dead Letter Topic cho Kafka consumer
+AccountEventConsumer, FraudDetectionEventConsumer, TransactionEventConsumer hiện chưa rõ xử lý gì khi message lỗi (deserialize fail, exception) — dễ mất event hoặc consumer bị stuck retry vô hạn. Thêm error handler đẩy sang DLT.
+
+account-service/src/main/java/com/banking/accountservice/service/AccountEventConsumer.java
+fraud-detection-service/src/main/java/com/banking/frauddetectionservice/service/FraudDetectionEventConsumer.java
+transaction-service/src/main/java/com/banking/transactionservice/service/TransactionEventConsumer.java
+application.yaml mỗi service (thêm spring.kafka.consumer.error-handler / DefaultErrorHandler bean)
+
+4. Database migration có version (Flyway)
+Đang thấy hibernate.ddl-auto/show-sql: true trong application.yaml (screenshot bạn gửi) — nghĩa là Hibernate tự sinh/sửa schema, rất rủi ro khi lên prod (mất data, đổi schema không kiểm soát). Chuyển sang Flyway.
+
+account-service/src/main/resources/application.yaml (+ tương tự payment/transaction-service)
+Thêm mới: account-service/src/main/resources/db/migration/V1__init.sql (và tương tự payment/transaction)
+pom.xml mỗi service có DB (thêm flyway-core, flyway-mysql)
+
+5. Observability: Prometheus + Grafana + tracing
+Hiện không thấy metrics/tracing nào — với hệ thống nhiều service gọi chéo nhau qua Kafka + REST, không có tracing thì debug production cực khó.
+
+pom.xml mỗi service (thêm micrometer-registry-prometheus, micrometer-tracing-bridge-otel)
+application.yaml mỗi service (management.endpoints.web.exposure.include: prometheus,health)
+banking-system-helm/charts/*/templates/deployment.yaml (thêm annotation prometheus.io/scrape)
+Mới: banking-system-helm/templates/monitoring/ nếu dùng kube-prometheus-stack (ServiceMonitor)
+
+6. Secrets không để plaintext root/root nữa
+account-secret.yaml đang để DB_USERNAME/DB_PASSWORD: root dạng stringData commit thẳng vào git — rủi ro bảo mật thật sự cho banking system.
+
+k8s/base/account-secret.yaml (và các secret tương tự nếu có)
+banking-system-helm/charts/*/templates/secret.yaml
+banking-system-helm/values-prod.yaml (đã có chỗ chờ sẵn values-secrets.yaml không commit — nên dùng đúng chỗ này, hoặc nâng cấp lên Sealed Secrets/External Secrets Operator)
+
+7. Bật lại Persistence cho MySQL + backup
+Hiện mysql-deployment.yaml không có volume — pod restart là mất sạch dữ liệu banking. Đã có sẵn field mysql.persistence.enabled trong chart (đang tắt).
+
+banking-system-helm/values.yaml / values-prod.yaml (bật persistence.enabled: true)
+banking-system-helm/templates/infra-mysql.yaml (đã hỗ trợ PVC sẵn, chỉ cần bật)
+Cân nhắc thêm mới: banking-system-helm/templates/mysql-backup-cronjob.yaml
+
+8. CI/CD tự động build → push → helm upgrade
+Hiện build/push image vào localhost:5000 có vẻ đang làm tay.
+
+Mới: .github/workflows/ci-cd.yaml (hoặc Jenkinsfile nếu bạn dùng Jenkins)
+banking-system-helm/values-dev.yaml / values-prod.yaml (image tag được CI set qua --set)
+
+Bạn muốn mình bắt đầu implement cái nào trước? Với hệ thống banking, mình sẽ ưu tiên thứ tự: #1 idempotency payment → #6 secrets → #4 Flyway → #2 circuit breaker → #3 DLQ Kafka → #7 persistence → #5 observability → #8 CI/CD.
+
+
+--------------------------------------------------------------------------------------------------------------------------------------
+
+
+Nhìn qua cấu trúc project eazybytes này (đây là template banking microservices rất nổi tiếng của khóa "Master Microservices with Spring Boot"), nó phát triển tuần tự qua từng "section" — đúng là một roadmap kỹ thuật rất hay để áp dụng vào banking-system của bạn. So với project hiện tại của bạn (account/payment/transaction/fraud-detection/notification/api-gateway, đã có Kafka + K8s/Helm/Kustomize khá xịn rồi), đây là các kỹ thuật đáng lấy, xếp theo độ ưu tiên:
+
+1. Config Server (section6 v2) — nên làm sớm
+Tách hết application.yml của từng service ra một repo/folder config riêng, service chỉ giữ spring.config.import=configserver:. Giúp đổi config (DB, Kafka, Razorpay keys...) mà không cần rebuild image — rất hợp với việc bạn đang có nhiều issue liên quan tới config sai giữa các overlay (dev/qa/prod).
+
+2. Eureka / Service Discovery (section7)
+Nếu bạn đang gọi service qua tên K8s Service (DNS) thì có thể bỏ qua bước này — K8s tự làm discovery rồi. Chỉ cần nếu bạn muốn load-balancing phía client hoặc chạy ngoài K8s (local dev).
+
+3. Feign Client + Fallback/Circuit Breaker (section8 → section_10)
+Đây là cái đáng áp dụng nhất cho bạn: AccountsController gọi sang Cards/Loans qua CardsFeignClient/LoansFeignClient, có CardsFallback/LoansFallback (Resilience4j). Bạn có thể áp cho api-gateway hoặc transaction-service khi gọi account-service/fraud-detection-service — tránh cascading failure khi 1 service down.
+
+4. Gateway + Security bằng Keycloak (section9 → section_12)
+GatewayserverApplication + SecurityConfig/KeycloakRoleConverter — OAuth2 resource server, route-based role authorization ngay ở gateway. Rất hợp vì bạn đã có api-gateway với RateLimiterConfig sẵn, thêm security layer vào đây là tự nhiên.
+
+5. Observability stack (section_11)
+Grafana + Loki (log) + Tempo (tracing) + Prometheus + Alloy — đóng gói sẵn dạng Helm chart. Vì bạn đã có K8s + Helm/Kustomize rồi, phần này copy gần như nguyên chart về là chạy được, giúp debug các bug crash-loop kiểu bạn từng gặp (MySQL connection refused) nhanh hơn nhiều nhờ có trace + log tập trung.
+
+6. Event-driven qua Spring Cloud Function (section_13/14, message service)
+Thay vì mỗi service tự viết @KafkaListener, họ dùng Spring Cloud Function (AccountsFunctions, MessageFunctions) để định nghĩa message xử lý như function thuần, cấu hình binding qua YAML. Cân nhắc nếu muốn giảm boilerplate Kafka listener trong notification-service/fraud-detection-service.
+
+7. BOM dùng chung (section_20, eazy-bom)
+Một module Maven BOM quản lý version chung (Spring Boot, dependencies) cho tất cả service — tránh version-drift giữa 6 module của bạn, và fix nhanh hơn các lỗi pom.xml sai artifact-id mà bạn từng gặp.
+
+Bạn muốn mình đi sâu vào cái nào trước — Feign + fallback, hay observability stack (vì nó liên quan trực tiếp tới mấy vụ crash-loop MySQL bạn đã fix gần đây)?
+
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Vì bạn đã có nền khá tốt rồi (Helm chart chung + Kustomize overlays, đã fix xong crash-loop), mình sẽ xếp theo tỷ lệ "công sức thấp / giá trị cao" trước:
+
+Nhóm 1 — làm ngay, nhanh (vài giờ), giá trị cao:
+
+PersistentVolume cho MySQL — bạn đã tự flag việc này rồi (mysql-deployment.yaml chưa có PV nên data mất mỗi lần restart, nghi là nguồn gây flaky trước đó). Đây là việc còn treo, nên dọn trước khi làm gì khác, vì nếu không mọi lần restart pod vẫn phải chờ MySQL init lại ~90s.
+Liveness/Readiness probes cho account/payment/transaction/fraud-detection/notification — hiện Helm chart của bạn (charts/microservice/templates/deployment.yaml) có thể chưa có. Thêm readinessProbe (/actuator/health/readiness) sẽ giúp K8s không route traffic vào pod chưa sẵn sàng — trực tiếp giải quyết đúng loại lỗi bạn từng gặp (pod "Running" nhưng thực chất chưa kết nối được DB).
+Resource requests/limits — bạn từng nghi MySQL bị OOMKilled (exit code 137). Đặt resources.requests/limits rõ ràng cho MySQL + các service sẽ giúp scheduler đặt pod hợp lý hơn và tránh OOMKill âm thầm.
+K8s Secret thay vì plaintext cho DB password, Razorpay keys — nếu hiện đang để trong values.yaml/ConfigMap dạng plaintext thì đây là việc nhanh và quan trọng về bảo mật.
+
+Nhóm 2 — làm sau, công sức vừa, giá trị cao:
+
+PodDisruptionBudget (PDB) cho mỗi service — vài dòng YAML, đảm bảo khi node bị drain/update thì không mất hết pod cùng lúc.
+HPA (Horizontal Pod Autoscaler) — dễ thêm vào Helm chart chung vì bạn đã có 1 chart dùng cho tất cả service (charts/microservice), chỉ cần bật autoscaling.enabled trong values từng service.
+
+Nhóm 3 — lớn hơn, để sau:
+
+Observability (Prometheus/Grafana/Loki/Tempo) — giá trị rất cao để debug nhanh các bug kiểu MySQL connection refused bạn từng gặp, nhưng setup tốn thời gian hơn (nhiều CRD, ServiceMonitor...).
+NetworkPolicy, Ingress, GitOps — để cuối vì ít cấp bách hơn với quy mô dev hiện tại.
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+kubectl kustomize k8s\overlays\dev --enable-helm --load-restrictor LoadRestrictionsNone > k8s\overlays\dev\banking-rendered.yaml
+kubectl apply -f k8s\overlays\dev\banking-rendered.yaml
+kubectl get pvc -n banking-system

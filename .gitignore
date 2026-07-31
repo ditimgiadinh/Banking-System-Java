@@ -1,4 +1,6 @@
-
+# IntelliJ IDEA
+.idea/
+*.iml
 
 # Hoặc nếu muốn chỉ bỏ workspace.xml
 .idea/workspace.xml

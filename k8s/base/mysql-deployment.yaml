@@ -21,3 +21,18 @@ spec:
           env:
             - name: MYSQL_ROOT_PASSWORD
               value: root
+          # THÊM MỚI (2026-07-31): mount volume vào đúng thư mục MySQL lưu data.
+          # Lý do: trước đây container không mount volume nào -> dùng ephemeral
+          # storage của pod -> mỗi lần pod restart (crash-loop, node update...)
+          # toàn bộ data (database, table, user) bị xóa sạch, MySQL phải
+          # init lại từ đầu (~90s) -> đây là nguồn gây flaky/crash-loop
+          # của account-service/payment-service/transaction-service trước đó.
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+      # THÊM MỚI (2026-07-31): khai báo volume trỏ tới PVC mysql-pvc
+      # (định nghĩa ở file mới k8s/base/mysql-pvc.yaml).
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-pvc
